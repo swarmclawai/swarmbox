@@ -55,10 +55,15 @@ def _create_handle(
     signal: object = None,
 ):
     throw_if_cancelled(signal)
+    sandbox_start_ms = timeouts.sandbox_start_ms if timeouts else None
     if sandbox.tag == "none":
-        return sandbox.create(worktree_path=worktree_path, env=env), worktree_path, None
+        return sandbox.create(
+            worktree_path=worktree_path,
+            env=env,
+            timeout_ms=sandbox_start_ms,
+        ), worktree_path, None
     if sandbox.tag == "isolated":
-        handle = sandbox.create(env=env)
+        handle = sandbox.create(env=env, timeout_ms=sandbox_start_ms)
         sync_in(worktree_path, handle, timeout_ms=timeouts.sync_in_ms if timeouts else None, signal=signal)
         for relative in copy_paths or []:
             throw_if_cancelled(signal)
@@ -81,6 +86,7 @@ def _create_handle(
         host_repo_path=host_repo_dir,
         internal_mounts=internal_mounts,
         env=env,
+        timeout_ms=sandbox_start_ms,
     )
     return handle, handle.worktree_path, None
 
@@ -116,6 +122,7 @@ def run(
     timeouts: Optional[Timeouts] = None,
     session_paths=None,
     config_dir: str = ".swarmbox",
+    _cleanup_worktree: bool = True,
 ) -> RunResult:
     throw_if_cancelled(signal)
     host_repo_dir = resolve_cwd(cwd)
@@ -219,7 +226,7 @@ def run(
             log_handle.close()
         if provider_handle:
             provider_handle.close()
-        if worktree and Path(worktree.path).exists():
+        if _cleanup_worktree and worktree and Path(worktree.path).exists():
             if has_uncommitted_changes(worktree.path):
                 preserved_path = worktree.path
             else:
@@ -244,6 +251,7 @@ def interactive(
     signal: object = None,
     timeouts: Optional[Timeouts] = None,
     config_dir: str = ".swarmbox",
+    _cleanup_worktree: bool = True,
 ) -> InteractiveResult:
     throw_if_cancelled(signal)
     sandbox = sandbox or no_sandbox()
@@ -308,12 +316,23 @@ def interactive(
     finally:
         if handle:
             handle.close()
-        if worktree and Path(worktree.path).exists() and not has_uncommitted_changes(worktree.path):
+        if _cleanup_worktree and worktree and Path(worktree.path).exists() and not has_uncommitted_changes(worktree.path):
             remove_worktree(worktree.path)
 
 
 class Sandbox:
-    def __init__(self, branch: str, worktree_path: str, host_repo_dir: str, provider, handle, sandbox_repo_dir: str, apply_to_host, hooks=None):
+    def __init__(
+        self,
+        branch: str,
+        worktree_path: str,
+        host_repo_dir: str,
+        provider,
+        handle,
+        sandbox_repo_dir: str,
+        apply_to_host,
+        hooks=None,
+        owns_worktree: bool = True,
+    ):
         self.branch = branch
         self.worktree_path = worktree_path
         self._host_repo_dir = host_repo_dir
@@ -322,6 +341,7 @@ class Sandbox:
         self._sandbox_repo_dir = sandbox_repo_dir
         self._apply_to_host = apply_to_host
         self._hooks = hooks
+        self._owns_worktree = owns_worktree
         self._closed = False
 
     def run(self, **options) -> RunResult:
@@ -389,6 +409,8 @@ class Sandbox:
             return CloseResult()
         self._closed = True
         self._handle.close()
+        if not self._owns_worktree:
+            return CloseResult()
         if has_uncommitted_changes(self.worktree_path):
             return CloseResult(preserved_worktree_path=self.worktree_path)
         remove_worktree(self.worktree_path)
@@ -412,6 +434,7 @@ def create_sandbox(
     signal: object = None,
     timeouts: Optional[Timeouts] = None,
     config_dir: str = ".swarmbox",
+    _owns_worktree: bool = True,
 ) -> Sandbox:
     throw_if_cancelled(signal)
     host_repo_dir = resolve_cwd(cwd)
@@ -435,7 +458,17 @@ def create_sandbox(
         timeouts=timeouts,
         signal=signal,
     )
-    return Sandbox(branch=info.branch, worktree_path=info.path, host_repo_dir=host_repo_dir, provider=sandbox, handle=handle, sandbox_repo_dir=sandbox_repo_dir, apply_to_host=apply_to_host, hooks=hooks)
+    return Sandbox(
+        branch=info.branch,
+        worktree_path=info.path,
+        host_repo_dir=host_repo_dir,
+        provider=sandbox,
+        handle=handle,
+        sandbox_repo_dir=sandbox_repo_dir,
+        apply_to_host=apply_to_host,
+        hooks=hooks,
+        owns_worktree=_owns_worktree,
+    )
 
 
 class Worktree:
@@ -447,16 +480,19 @@ class Worktree:
     def run(self, **options) -> RunResult:
         options.setdefault("cwd", self._host_repo_dir)
         options["branch_strategy"] = branch_strategy(self.branch)
+        options["_cleanup_worktree"] = False
         return run(**options)
 
     def interactive(self, **options) -> InteractiveResult:
         options.setdefault("cwd", self._host_repo_dir)
         options["branch_strategy"] = branch_strategy(self.branch)
+        options["_cleanup_worktree"] = False
         return interactive(**options)
 
     def create_sandbox(self, **options) -> Sandbox:
         options.setdefault("cwd", self._host_repo_dir)
         options["branch"] = self.branch
+        options["_owns_worktree"] = False
         return create_sandbox(**options)
 
     def close(self) -> CloseResult:

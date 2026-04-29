@@ -1,31 +1,23 @@
-# SwarmBox Feature Status
+# SwarmBox Roadmap
 
-SwarmBox is moving toward a complete, production-ready orchestration layer for
-coding agents in local, container, and cloud workspaces.
+SwarmBox is a Python orchestration layer for coding agents that need repeatable git workspaces, sandbox startup, prompt execution, logs, sessions, and recovery paths.
 
-## Implemented
+## Current Release Line
 
-- Python API: `run`, `interactive`, `create_sandbox`, `create_worktree`, plus
-  async wrappers.
-- Agent providers: Claude Code, Codex, OpenCode, Pi, generic command agents,
-  and a SwarmVault/SwarmClaw-seeded registry.
-- Sandbox providers: Docker, Podman, no-sandbox, Vercel, and Daytona entry
-  points.
-- Branch strategies: `head`, `merge-to-head`, and explicit named branches.
-- Prompt files, inline prompts, `{{ARG}}` substitution, built-in branch args,
-  and marked shell expansion.
-- Host and sandbox lifecycle hooks with timeout and cancellation support.
-- Worktree creation, stale pruning, dirty preservation, and commit collection.
-- Stream callbacks, text buffering, idle timeout enforcement, and basic
-  cancellation tokens.
-- Session transfer helpers and configurable session paths.
-- Sync-in/sync-out recovery artifacts and copy-pastable recovery messages.
-- CLI commands for init, run, agent discovery, and image lifecycle helpers.
+- Python API for `run`, `interactive`, `create_sandbox`, `create_worktree`, and async wrappers.
+- First-class adapters for Claude Code, Codex, OpenCode, and Pi.
+- Registry-backed generic adapters for SwarmVault and SwarmClaw-compatible command-line agents.
+- Host, Docker, Podman, Vercel, and Daytona sandbox entry points.
+- Head, merge-to-head, explicit branch, and owned worktree workflows.
+- Packaged init templates for blank, simple loop, sequential review, parallel planning, and parallel planning with review.
+- Prompt files, prompt args, built-in branch args, and shell expansion.
+- Stream callbacks, session helpers, cancellation, idle timeout, startup/copy/sync timeouts, and recovery messages.
+- CLI support for init, run, agents, templates, and image lifecycle helpers.
 
 ## Hardening Before 1.0
 
-- Broaden live smoke coverage for Docker, Podman, Vercel, Daytona, and real
-  agent CLIs.
-- Expand parser fixtures as CLI JSON stream formats evolve.
-- Continue improving template ergonomics for multi-agent backlog workflows.
-- Add CI jobs for unit tests, linting, typing, packaging, and secret checks.
+- Broaden live smoke coverage for Docker, Podman, Vercel, Daytona, and real coding-agent CLIs.
+- Add more parser fixtures as agent JSON stream formats evolve.
+- Improve type coverage until `mypy src` can become a required release gate.
+- Add richer examples for CI automation and multi-agent backlog workflows.
+- Continue tightening cleanup behavior for interrupted cloud sandbox startup.

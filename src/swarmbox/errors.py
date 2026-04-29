@@ -30,6 +30,12 @@ class SandboxError(SwarmBoxError):
     pass
 
 
+class SandboxStartTimeoutError(SandboxError):
+    def __init__(self, message: str, timeout_ms: int):
+        super().__init__(message)
+        self.timeout_ms = timeout_ms
+
+
 class ExecError(SandboxError):
     def __init__(self, command: str, message: str):
         super().__init__(message)

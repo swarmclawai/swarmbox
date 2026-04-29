@@ -6,12 +6,14 @@ import subprocess
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
+from inspect import Parameter, signature
 from typing import Callable, Dict, Iterable, List, Optional, Sequence
 
 from .cancellation import throw_if_cancelled
 from .copying import copy_tree
-from .errors import AgentIdleTimeoutError, ContainerError, SandboxError
+from .errors import AgentIdleTimeoutError, ContainerError, SandboxError, SandboxStartTimeoutError
 from .models import ExecResult
 from .mounts import MountConfig, default_image_name, resolve_user_mounts, volume_arg
 from .terminal_cleanup import register_container, unregister_container
@@ -253,7 +255,32 @@ class SandboxProvider:
     def create(self, **kwargs):
         if not self.factory:
             raise SandboxError("Sandbox provider %s has no factory" % self.name)
-        return self.factory(**kwargs)
+        timeout_ms = kwargs.pop("timeout_ms", None)
+        call_kwargs = dict(kwargs)
+        if timeout_ms is not None and _factory_accepts_kwarg(self.factory, "timeout_ms"):
+            call_kwargs["timeout_ms"] = timeout_ms
+        if timeout_ms is None:
+            return self.factory(**call_kwargs)
+        executor = ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(self.factory, **call_kwargs)
+        try:
+            return future.result(timeout=max(timeout_ms, 0) / 1000)
+        except FutureTimeoutError as exc:
+            future.cancel()
+            raise SandboxStartTimeoutError(
+                "Sandbox provider %s did not start within %sms" % (self.name, timeout_ms),
+                timeout_ms=timeout_ms,
+            ) from exc
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
+
+def _factory_accepts_kwarg(factory: Callable[..., object], name: str) -> bool:
+    try:
+        params = signature(factory).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(param.kind == Parameter.VAR_KEYWORD or param.name == name for param in params)
 
 
 def create_bind_mount_sandbox_provider(
@@ -306,7 +333,13 @@ def _container_provider(
     sandbox_homedir = "/home/agent"
     user_mounts = resolve_user_mounts(mounts or [], sandbox_homedir)
 
-    def create(worktree_path: str, host_repo_path: str, internal_mounts, env: Dict[str, str]):
+    def create(
+        worktree_path: str,
+        host_repo_path: str,
+        internal_mounts,
+        env: Dict[str, str],
+        timeout_ms: Optional[int] = None,
+    ):
         _check_runtime(runtime)
         name = "swarmbox-%s" % uuid.uuid4()
         all_mounts = list(internal_mounts) + user_mounts
@@ -343,8 +376,18 @@ def _container_provider(
         run_args.append(image_name or default_image_name(host_repo_path))
         if runtime == "podman":
             run_args.append("infinity")
-        subprocess.check_call(run_args)
-        register_container(runtime, name)
+        try:
+            subprocess.check_call(run_args, timeout=(timeout_ms / 1000) if timeout_ms else None)
+            register_container(runtime, name)
+        except subprocess.TimeoutExpired as exc:
+            subprocess.call(
+                [runtime, "rm", "-f", name],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            raise ContainerError(
+                "%s container did not start within %sms" % (runtime, timeout_ms)
+            ) from exc
         return ContainerHandle(runtime=runtime, container_name=name, worktree_path=worktree_path)
 
     return create_bind_mount_sandbox_provider(
@@ -382,7 +425,8 @@ def podman(
 
 
 def vercel(**options) -> SandboxProvider:
-    def create(env: Dict[str, str]):
+    def create(env: Dict[str, str], timeout_ms: Optional[int] = None):
+        del timeout_ms
         try:
             from vercel.sandbox import Sandbox  # type: ignore
         except Exception as exc:
@@ -440,7 +484,8 @@ def vercel(**options) -> SandboxProvider:
 
 
 def daytona(**options) -> SandboxProvider:
-    def create(env: Dict[str, str]):
+    def create(env: Dict[str, str], timeout_ms: Optional[int] = None):
+        del timeout_ms
         del env
         try:
             from daytona_sdk import Daytona  # type: ignore

@@ -1,6 +1,7 @@
 import json
 import subprocess
 from dataclasses import dataclass
+from importlib.resources import files
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -147,40 +148,14 @@ print({"branch": result.branch, "commits": [c.sha for c in result.commits]})
 
 
 def _template_files(template_name: str) -> Dict[str, str]:
-    base_prompt = """You are working in branch {{SOURCE_BRANCH}} targeting {{TARGET_BRANCH}}.
-
-Task:
-!`{{VIEW_TASK_COMMAND}}`
-
-Make the requested code change, commit it, and include <promise>COMPLETE</promise>
-when finished.
-"""
-    if template_name == "blank":
-        return {"prompt.md": "Describe the task for the agent here.\n\nFinish with <promise>COMPLETE</promise>.\n"}
-    if template_name == "simple-loop":
-        return {"prompt.md": base_prompt}
-    if template_name == "sequential-reviewer":
-        return {
-            "implement-prompt.md": base_prompt,
-            "review-prompt.md": "Review branch {{SOURCE_BRANCH}} against {{TARGET_BRANCH}} and commit fixes.\n",
-            "CODING_STANDARDS.md": "# Coding Standards\n\nKeep changes focused and tested.\n",
-        }
-    if template_name == "parallel-planner":
-        return {
-            "plan-prompt.md": "List independent tasks from:\n!`{{LIST_TASKS_COMMAND}}`\n",
-            "implement-prompt.md": base_prompt,
-            "merge-prompt.md": "Merge completed SwarmBox branches into {{TARGET_BRANCH}}.\n",
-        }
-    if template_name == "parallel-planner-with-review":
-        files = _template_files("parallel-planner")
-        files.update(
-            {
-                "review-prompt.md": "Review branch {{SOURCE_BRANCH}} against {{TARGET_BRANCH}} and commit fixes.\n",
-                "CODING_STANDARDS.md": "# Coding Standards\n\nKeep changes focused and tested.\n",
-            }
-        )
-        return files
-    raise InitError("Unknown template %s" % template_name)
+    template_root = files("swarmbox.templates").joinpath(template_name)
+    if not template_root.is_dir():
+        raise InitError("Unknown template %s" % template_name)
+    output = {}
+    for item in sorted(template_root.iterdir(), key=lambda entry: entry.name):
+        if item.is_file():
+            output[item.name] = item.read_text(encoding="utf-8")
+    return output
 
 
 def _substitute(content: str, args: Dict[str, str]) -> str:

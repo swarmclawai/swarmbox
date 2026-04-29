@@ -1,0 +1,1 @@
+"""Packaged SwarmBox init templates."""

@@ -1,4 +1,5 @@
 exclude .env
 exclude .env.*
+recursive-include src/swarmbox/templates *
 recursive-exclude . *.pyc
 recursive-exclude . __pycache__

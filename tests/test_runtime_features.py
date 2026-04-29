@@ -7,9 +7,10 @@ import subprocess
 
 from swarmbox.cancellation import CancellationToken, CancelledError
 from swarmbox.copying import copy_to_worktree
-from swarmbox.errors import AgentIdleTimeoutError, CopyError
-from swarmbox.models import AgentProvider, ExecResult, PrintCommand
+from swarmbox.errors import AgentIdleTimeoutError, CopyError, SandboxStartTimeoutError
+from swarmbox.models import AgentProvider, ExecResult, PrintCommand, Timeouts
 from swarmbox.orchestrator import OrchestrateOptions, orchestrate
+from swarmbox.sandbox import SandboxProvider
 from swarmbox.session_paths import default_session_paths_layer, session_paths_layer
 from swarmbox.streaming import TextDeltaBuffer
 from swarmbox.sync import build_recovery_message
@@ -129,6 +130,45 @@ class RuntimeFeatureTests(unittest.TestCase):
         self.assertEqual(explicit.host_projects_dir, "/host/projects")
         default = default_session_paths_layer()
         self.assertTrue(default.host_projects_dir.endswith(".claude/projects"))
+
+    def test_sandbox_start_timeout_is_passed_to_provider_factory(self):
+        seen = {}
+
+        def factory(worktree_path, env, timeout_ms=None):
+            seen["worktree_path"] = worktree_path
+            seen["env"] = env
+            seen["timeout_ms"] = timeout_ms
+            return FakeSandbox()
+
+        provider = SandboxProvider("none", "fake", factory=factory)
+        with tempfile.TemporaryDirectory() as repo:
+            subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True, stdout=subprocess.DEVNULL)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+            Path(repo, "README.md").write_text("test\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, stdout=subprocess.DEVNULL)
+            from swarmbox import create_sandbox
+
+            sandbox = create_sandbox(
+                branch="swarmbox/timeout",
+                sandbox=provider,
+                cwd=repo,
+                timeouts=Timeouts(sandbox_start_ms=123),
+            )
+            sandbox.close()
+        self.assertEqual(seen["timeout_ms"], 123)
+
+    def test_sandbox_provider_create_enforces_start_timeout(self):
+        def factory():
+            time.sleep(0.2)
+            return FakeSandbox()
+
+        provider = SandboxProvider("isolated", "slow", factory=factory)
+        started = time.monotonic()
+        with self.assertRaises(SandboxStartTimeoutError):
+            provider.create(timeout_ms=1)
+        self.assertLess(time.monotonic() - started, 0.15)
 
 
 if __name__ == "__main__":

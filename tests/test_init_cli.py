@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest.mock import patch
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
@@ -28,6 +29,21 @@ class InitCliTests(unittest.TestCase):
             self.assertTrue((config / "review-prompt.md").exists())
             self.assertTrue((config / "swarmbox.json").exists())
             self.assertIn("codex", (config / "main.py").read_text(encoding="utf-8"))
+
+    def test_cli_init_interactive_accepts_defaults_without_building(self):
+        with tempfile.TemporaryDirectory() as td:
+            answers = StringIO("\n\n\n\n\n\n\n")
+            with patch("sys.stdin", answers), redirect_stdout(StringIO()):
+                self.assertEqual(main(["init", "--cwd", td, "--interactive"]), 0)
+            config = Path(td) / ".swarmbox"
+            self.assertTrue((config / "Dockerfile").exists())
+            self.assertTrue((config / "prompt.md").exists())
+
+    def test_cli_templates_list_runs(self):
+        output = StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(main(["templates", "list"]), 0)
+        self.assertIn("parallel-planner-with-review", output.getvalue())
 
     def test_cli_agents_list_runs(self):
         with redirect_stdout(StringIO()):
